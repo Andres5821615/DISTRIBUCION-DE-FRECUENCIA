@@ -1,0 +1,496 @@
+---
+title: "DISTRIBUCION DE FRECUENCIA"
+subtitle: "Taller 2 – TABLAS Y GRAFICAS"
+author:
+  - "Andres Quintero Garzon"
+  - "Monica Lizeth Lozano Ortegon"
+date: today
+lang: es
+format:
+  html:
+    page-layout: full
+    toc: true
+    toc-location: right
+    number-sections: true
+    code-fold: true
+    code-summary: "Ver código"
+    theme: cosmo
+    highlight-style: github
+    html-math-method: katex
+    smooth-scroll: true
+    code-overflow: scroll
+editor: source
+execute:
+  echo: true
+  warning: false
+  message: false
+  freeze: auto
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+paquetes <- c("readxl", "dplyr", "ggplot2", "knitr", "kableExtra", "scales", "tidyr")
+faltantes <- paquetes[!vapply(paquetes, requireNamespace, logical(1), quietly = TRUE)]
+if (length(faltantes) > 0) {
+  install.packages(faltantes, repos = "https://cloud.r-project.org")
+}
+invisible(lapply(paquetes, library, character.only = TRUE))
+
+# El Excel debe estar en la misma carpeta que este archivo QMD.
+archivo_excel <- "sector.xlsx"
+if (!file.exists(archivo_excel)) {
+  stop("No se encontró 'sector.xlsx'. Guarde el Excel en la misma carpeta de index.qmd.")
+}
+
+datos <- readxl::read_excel(archivo_excel) |> as.data.frame()
+
+# Validación de estructura: 10 variables definidas en el taller.
+variables_esperadas <- c(
+  "Sector_Laboral", "Nivel_Ingresos", "Satisfaccion_Servicio",
+  "Frecuencia_Participacion", "Anos_Experiencia", "Numero_Hijos",
+  "Salario", "Satisfaccion_Laboral", "Edad", "Participacion_Programas"
+)
+faltantes_columnas <- setdiff(variables_esperadas, names(datos))
+if (length(faltantes_columnas) > 0) {
+  stop(paste("Faltan columnas en el Excel:", paste(faltantes_columnas, collapse = ", ")))
+}
+datos <- datos[, variables_esperadas]
+
+# Categorías y orden definidos en el diccionario del trabajo.
+datos <- datos |>
+  mutate(
+    Sector_Laboral = factor(Sector_Laboral,
+      levels = c("Sector Salud", "Educación", "Transporte", "Seguridad", "Administrativo")),
+    Nivel_Ingresos = factor(Nivel_Ingresos,
+      levels = c("Baja", "Media", "Alta"), ordered = TRUE),
+    Satisfaccion_Servicio = factor(Satisfaccion_Servicio,
+      levels = c("Muy Insatisfecho", "Insatisfecho", "Neutral", "Satisfecho", "Muy Satisfecho"),
+      ordered = TRUE),
+    Frecuencia_Participacion = factor(Frecuencia_Participacion,
+      levels = c("Nunca", "Rara vez", "A veces", "Frecuentemente", "Siempre"),
+      ordered = TRUE)
+  )
+
+variables_nominales <- "Sector_Laboral"
+variables_ordinales <- c("Nivel_Ingresos", "Satisfaccion_Servicio", "Frecuencia_Participacion")
+variables_discretas <- c("Anos_Experiencia", "Numero_Hijos")
+variables_continuas <- c("Salario", "Satisfaccion_Laboral", "Edad", "Participacion_Programas")
+variables_numericas <- c(variables_discretas, variables_continuas)
+
+# Verifica que las columnas cuantitativas sean numéricas.
+no_numericas <- variables_numericas[!vapply(datos[variables_numericas], is.numeric, logical(1))]
+if (length(no_numericas) > 0) {
+  stop(paste("Estas columnas deben ser numéricas en Excel:", paste(no_numericas, collapse = ", ")))
+}
+
+# Resumen general derivado directamente de los registros.
+n_registros <- nrow(datos)
+n_variables <- ncol(datos)
+total_faltantes <- sum(is.na(datos))
+
+# Función de moda que conserva valores numéricos y reporta empates.
+moda_valor <- function(x) {
+  x <- x[!is.na(x)]
+  if (length(x) == 0) return(NA_character_)
+  f <- table(x)
+  paste(names(f)[f == max(f)], collapse = ", ")
+}
+
+tabla_frecuencias <- function(x, acumuladas = TRUE) {
+  if (is.factor(x)) {
+    cats <- levels(x)
+    f <- as.integer(table(factor(x, levels = cats), useNA = "no"))
+    tab <- data.frame(Categoria = cats, fi = f)
+  } else {
+    tab <- as.data.frame(table(x, useNA = "no"), stringsAsFactors = FALSE)
+    names(tab) <- c("Categoria", "fi")
+    tab$fi <- as.integer(tab$fi)
+  }
+  tab <- tab |> dplyr::mutate(
+    hi = if (sum(fi) > 0) fi / sum(fi) else NA_real_,
+    Porcentaje = hi * 100
+  )
+  if (acumuladas) {
+    tab <- tab |> dplyr::mutate(Fi = cumsum(fi), Hi = cumsum(hi))
+  }
+  tab
+}
+
+tabla_agrupada <- function(x) {
+  x <- x[!is.na(x)]
+  n <- length(x)
+  if (n == 0) stop("No hay observaciones válidas para agrupar.")
+  if (min(x) == max(x)) {
+    return(data.frame(Intervalo = as.character(min(x)), Marca_clase = min(x),
+      fi = n, hi = 1, Porcentaje = 100, Fi = n, Hi = 1))
+  }
+  k <- max(1, ceiling(1 + 3.322 * log10(n)))
+  cortes <- pretty(range(x), n = k)
+  cortes <- unique(c(min(x), cortes[cortes > min(x) & cortes < max(x)], max(x)))
+  if (length(cortes) < 2) cortes <- c(min(x), max(x) + .Machine$double.eps^0.5)
+  clases <- cut(x, breaks = cortes, include.lowest = TRUE, right = TRUE)
+  f <- as.integer(table(clases))
+  lim <- levels(clases)
+  marcas <- (head(cortes, -1) + tail(cortes, -1)) / 2
+  data.frame(Intervalo = lim, Marca_clase = marcas, fi = f) |>
+    dplyr::mutate(hi = fi / sum(fi), Porcentaje = hi * 100,
+                  Fi = cumsum(fi), Hi = cumsum(hi))
+}
+```
+
+```{=html}
+<div style="display:flex; justify-content:flex-end; margin-bottom:1rem;">
+  <img src="Logo_Esap.png" width="125" alt="Logo de la ESAP">
+</div>
+<style>
+body { background-color: #fbfbf7; font-size: 1.04rem; text-align: justify; }
+h1, h2, h3 { color: #173b82; }
+table { font-size: .93rem; }
+</style>
+```
+
+# Introducción
+
+La estadística descriptiva permite organizar, resumir, analizar y presentar información mediante tablas, medidas numéricas y representaciones gráficas. En este taller se estudia una base de datos relacionada con personas vinculadas a diferentes sectores de la administración pública.
+
+El análisis se realiza con el archivo Excel `sector.xlsx`, que contiene **`r n_registros` registros y `r n_variables` variables**. Los resultados se calculan desde los datos originales; por ello, las tablas y los gráficos se actualizan cuando se modifica el Excel y se vuelve a renderizar este documento.
+
+**Objetivo general**
+
+Realizar un análisis estadístico descriptivo de los registros de la base de datos, mediante distribuciones de frecuencias, medidas de tendencia central, medidas de dispersión y gráficos.
+
+**Objetivos específicos**
+
+- Identificar y clasificar las variables según el diccionario del taller.
+- Construir tablas de frecuencias absolutas, relativas, porcentuales y acumuladas cuando corresponda.
+- Representar gráficamente las variables cualitativas y cuantitativas.
+- Calcular medidas de tendencia central y dispersión para las variables numéricas.
+- Agrupar las variables cuantitativas continuas mediante la regla de Sturges.
+- Interpretar los resultados con base en los registros observados.
+
+# Fuente de información y revisión de la base
+
+La fuente de información es el archivo Excel `sector.xlsx`, hoja `Sheet1`. La base contiene `r n_registros` observaciones y `r n_variables` variables.
+
+```{r}
+resumen_base <- data.frame(
+  Indicador = c("Número de observaciones", "Número de variables",
+                "Valores faltantes", "Variables cualitativas",
+                "Variables cuantitativas"),
+  Resultado = c(n_registros, n_variables, total_faltantes,
+                length(variables_nominales) + length(variables_ordinales),
+                length(variables_numericas))
+)
+knitr::kable(resumen_base, caption = "Resumen general de la base de datos") |>
+  kableExtra::kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover"))
+```
+
+```{r}
+knitr::kable(head(datos, 10), caption = "Primeros diez registros de la base") |>
+  kableExtra::kable_styling(full_width = TRUE, bootstrap_options = c("striped", "hover"))
+```
+
+**Revisión de calidad.** En el archivo recibido se identificaron `r total_faltantes` valores faltantes. Las variables requeridas están presentes y la base contiene 200 registros y 10 columnas. La revisión se vuelve a ejecutar automáticamente al renderizar.
+
+# Diccionario y clasificación de variables
+
+| Variable | Tipo | Descripción |
+|---|---|---|
+| `Sector_Laboral` | Cualitativa nominal | Sector: Salud, Educación, Transporte, Seguridad y Administrativo. |
+| `Nivel_Ingresos` | Cualitativa ordinal | Nivel de ingresos: Baja, Media y Alta. |
+| `Satisfaccion_Servicio` | Cualitativa ordinal | Muy Insatisfecho, Insatisfecho, Neutral, Satisfecho y Muy Satisfecho. |
+| `Frecuencia_Participacion` | Cualitativa ordinal | Nunca, Rara vez, A veces, Frecuentemente y Siempre. |
+| `Anos_Experiencia` | Cuantitativa discreta | Años de experiencia laboral. |
+| `Numero_Hijos` | Cuantitativa discreta | Número de hijos registrados. |
+| `Salario` | Cuantitativa continua | Salario mensual en miles de pesos; 1.000 equivale a $1.000.000 COP. |
+| `Satisfaccion_Laboral` | Cuantitativa continua | Puntaje de satisfacción laboral. |
+| `Edad` | Cuantitativa continua* | Edad en años; en el archivo se registra en números enteros. |
+| `Participacion_Programas` | Cuantitativa continua | Proporción de participación, entre 0 y 1. |
+
+*Se conserva la clasificación del diccionario de variables, aunque la edad observada esté expresada en años enteros.*
+
+# Distribución de frecuencias: conceptos y fórmulas
+
+La frecuencia absoluta (\(f_i\)) cuenta las observaciones de una categoría o intervalo. La frecuencia relativa (\(h_i\)) expresa la proporción correspondiente y el porcentaje se obtiene multiplicando esa proporción por 100.
+
+\[
+h_i = \frac{f_i}{n}
+\qquad
+p_i = \frac{f_i}{n}\times 100
+\]
+
+La frecuencia absoluta acumulada suma las frecuencias hasta la categoría \(i\), y la frecuencia relativa acumulada suma las proporciones hasta esa misma categoría:
+
+\[
+F_i = \sum_{j=1}^{i} f_j
+\qquad
+H_i = \sum_{j=1}^{i} h_j
+\]
+
+Para agrupar datos cuantitativos se emplea la regla de Sturges:
+
+\[
+k = 1 + 3.322\log_{10}(n)
+\]
+
+El rango se calcula como \(R=X_{\max}-X_{\min}\), y la amplitud aproximada de clase como \(A=R/k\). Las frecuencias acumuladas son especialmente útiles en variables ordinales y cuantitativas, porque sus categorías admiten un orden.
+
+# Análisis de variables cualitativas
+
+## Sector laboral
+
+`Sector_Laboral` es una variable cualitativa nominal porque sus categorías no tienen un orden jerárquico.
+
+```{r}
+tabla_sector <- tabla_frecuencias(datos$Sector_Laboral, acumuladas = FALSE)
+knitr::kable(tabla_sector, digits = 3, caption = "Frecuencias por sector laboral") |>
+  kableExtra::kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover"))
+```
+
+```{r}
+ggplot(tabla_sector, aes(x = reorder(Categoria, -fi), y = fi, fill = Categoria)) +
+  geom_col(show.legend = FALSE) +
+  geom_text(aes(label = fi), vjust = -0.35) +
+  labs(title = "Registros por sector laboral", x = "Sector laboral", y = "Frecuencia") +
+  theme_minimal()
+```
+
+**Interpretación.** El sector con mayor número de registros es **`r as.character(tabla_sector$Categoria[which.max(tabla_sector$fi)])`**, con **`r max(tabla_sector$fi)` registros** (`r round(max(tabla_sector$fi)/sum(tabla_sector$fi)*100, 1)` %). Esta comparación describe únicamente la distribución de la base analizada.
+
+## Nivel de ingresos
+
+```{r}
+tabla_ingresos <- tabla_frecuencias(datos$Nivel_Ingresos)
+knitr::kable(tabla_ingresos, digits = 3, caption = "Frecuencias del nivel de ingresos") |>
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+```{r}
+ggplot(tabla_ingresos, aes(x = Categoria, y = fi)) +
+  geom_col(fill = "steelblue") + geom_text(aes(label = fi), vjust = -0.35) +
+  labs(title = "Distribución del nivel de ingresos", x = "Nivel de ingresos", y = "Frecuencia") +
+  theme_minimal()
+```
+
+**Interpretación.** La categoría más frecuente es **`r as.character(tabla_ingresos$Categoria[which.max(tabla_ingresos$fi)])`**, con `r max(tabla_ingresos$fi)` registros. El orden Baja–Media–Alta permite leer también las frecuencias acumuladas.
+
+## Satisfacción con el servicio
+
+```{r}
+tabla_servicio <- tabla_frecuencias(datos$Satisfaccion_Servicio)
+knitr::kable(tabla_servicio, digits = 3, caption = "Frecuencias de satisfacción con el servicio") |>
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+```{r}
+ggplot(tabla_servicio, aes(x = Categoria, y = fi)) +
+  geom_col(fill = "mediumpurple3") + geom_text(aes(label = fi), vjust = -0.35) +
+  labs(title = "Satisfacción con el servicio", x = "Respuesta", y = "Frecuencia") +
+  theme_minimal() + theme(axis.text.x = element_text(angle = 20, hjust = 1))
+```
+
+**Interpretación.** La respuesta más frecuente es **`r as.character(tabla_servicio$Categoria[which.max(tabla_servicio$fi)])`**, con `r max(tabla_servicio$fi)` registros. La escala ordenada permite observar la distribución desde la insatisfacción hasta la satisfacción.
+
+## Frecuencia de participación
+
+```{r}
+tabla_participacion <- tabla_frecuencias(datos$Frecuencia_Participacion)
+knitr::kable(tabla_participacion, digits = 3, caption = "Frecuencias de participación") |>
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+```{r}
+ggplot(tabla_participacion, aes(x = Categoria, y = fi)) +
+  geom_col(fill = "tan3") + geom_text(aes(label = fi), vjust = -0.35) +
+  labs(title = "Frecuencia de participación", x = "Frecuencia declarada", y = "Registros") +
+  theme_minimal() + theme(axis.text.x = element_text(angle = 20, hjust = 1))
+```
+
+**Interpretación.** La respuesta más frecuente es **`r as.character(tabla_participacion$Categoria[which.max(tabla_participacion$fi)])`**, con `r max(tabla_participacion$fi)` registros. La escala va de Nunca a Siempre y facilita identificar la frecuencia de participación más común.
+
+# Análisis de variables cuantitativas
+
+## Medidas de tendencia central y dispersión
+
+La media aritmética se calcula sumando los valores y dividiendo entre el número de observaciones. La mediana es el valor central de los datos ordenados y la moda corresponde al valor que más se repite.
+
+\[
+\bar{x}=\frac{\sum_{i=1}^{n}x_i}{n}
+\]
+
+La varianza muestral, la desviación estándar, el rango y el coeficiente de variación permiten describir la dispersión:
+
+\[
+s^2=\frac{\sum_{i=1}^{n}(x_i-\bar{x})^2}{n-1}
+\qquad
+s=\sqrt{s^2}
+\qquad
+CV=\frac{s}{\bar{x}}\times100
+\]
+
+```{r}
+tabla_descriptiva <- dplyr::bind_rows(lapply(variables_numericas, function(v) {
+  x <- datos[[v]]
+  x <- x[!is.na(x)]
+  data.frame(
+    Variable = v, n = length(x),
+    Minimo = min(x), Maximo = max(x),
+    Media = mean(x), Mediana = median(x),
+    Moda = moda_valor(x),
+    Desviacion_estandar = sd(x),
+    Varianza = var(x),
+    Rango = diff(range(x)),
+    Coeficiente_variacion = if (mean(x) != 0) sd(x) / mean(x) * 100 else NA_real_
+  )
+}))
+knitr::kable(tabla_descriptiva, digits = 3,
+  caption = "Medidas descriptivas de las variables cuantitativas") |>
+  kableExtra::kable_styling(full_width = TRUE, bootstrap_options = c("striped", "hover"))
+```
+
+## Variables cuantitativas discretas
+
+### Años de experiencia
+
+```{r}
+tabla_experiencia <- tabla_frecuencias(datos$Anos_Experiencia)
+knitr::kable(tabla_experiencia, digits = 3, caption = "Frecuencias de años de experiencia") |>
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+```{r}
+ggplot(datos, aes(x = factor(Anos_Experiencia))) +
+  geom_bar(fill = "steelblue") +
+  labs(title = "Años de experiencia laboral", x = "Años", y = "Frecuencia") +
+  theme_minimal()
+```
+
+### Número de hijos
+
+```{r}
+tabla_hijos <- tabla_frecuencias(datos$Numero_Hijos)
+knitr::kable(tabla_hijos, digits = 3, caption = "Frecuencias del número de hijos") |>
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+```{r}
+ggplot(datos, aes(x = factor(Numero_Hijos))) +
+  geom_bar(fill = "coral3") +
+  labs(title = "Distribución del número de hijos", x = "Número de hijos", y = "Frecuencia") +
+  theme_minimal()
+```
+
+## Variables cuantitativas continuas: agrupación por Sturges
+
+Las siguientes tablas se construyen usando los valores mínimo y máximo observados en cada variable y el número de clases sugerido por la regla de Sturges.
+
+### Salario
+
+El salario se encuentra expresado en miles de pesos. Por ejemplo, un valor de 1.000 equivale a $1.000.000 COP.
+
+```{r}
+tabla_salario <- tabla_agrupada(datos$Salario)
+knitr::kable(tabla_salario, digits = 3, caption = "Distribución agrupada del salario (miles de pesos)") |>
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+```{r}
+ggplot(datos, aes(x = Salario)) +
+  geom_histogram(bins = ceiling(1 + 3.322 * log10(sum(!is.na(datos$Salario)))),
+                 color = "white", fill = "steelblue") +
+  labs(title = "Distribución del salario", x = "Salario (miles de pesos)", y = "Frecuencia") +
+  theme_minimal()
+```
+
+### Satisfacción laboral
+
+```{r}
+tabla_sat_laboral <- tabla_agrupada(datos$Satisfaccion_Laboral)
+knitr::kable(tabla_sat_laboral, digits = 3, caption = "Distribución agrupada de satisfacción laboral") |>
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+```{r}
+ggplot(datos, aes(x = Satisfaccion_Laboral)) +
+  geom_histogram(bins = ceiling(1 + 3.322 * log10(sum(!is.na(datos$Satisfaccion_Laboral)))),
+                 color = "white", fill = "darkseagreen4") +
+  labs(title = "Distribución de satisfacción laboral", x = "Puntaje", y = "Frecuencia") +
+  theme_minimal()
+```
+
+### Edad
+
+```{r}
+tabla_edad <- tabla_agrupada(datos$Edad)
+knitr::kable(tabla_edad, digits = 3, caption = "Distribución agrupada de la edad") |>
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+```{r}
+ggplot(datos, aes(x = Edad)) +
+  geom_histogram(bins = ceiling(1 + 3.322 * log10(sum(!is.na(datos$Edad)))),
+                 color = "white", fill = "mediumpurple3") +
+  labs(title = "Distribución de la edad", x = "Edad (años)", y = "Frecuencia") +
+  theme_minimal()
+```
+
+### Participación en programas
+
+La variable se registra como una proporción. Para expresarla en porcentaje se multiplica por cien.
+
+```{r}
+tabla_programas <- tabla_agrupada(datos$Participacion_Programas)
+knitr::kable(tabla_programas, digits = 3, caption = "Distribución agrupada de participación en programas (proporción)") |>
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+```{r}
+ggplot(datos, aes(x = Participacion_Programas * 100)) +
+  geom_histogram(bins = ceiling(1 + 3.322 * log10(sum(!is.na(datos$Participacion_Programas)))),
+                 color = "white", fill = "tan3") +
+  labs(title = "Participación en programas", x = "Participación (%)", y = "Frecuencia") +
+  theme_minimal()
+```
+
+# Comparación y lectura general de resultados
+
+La siguiente tabla resume las variables numéricas y permite comparar sus medidas principales.
+
+```{r}
+indicadores <- tabla_descriptiva |>
+  dplyr::select(Variable, n, Media, Mediana, Desviacion_estandar, Minimo, Maximo)
+knitr::kable(indicadores, digits = 2, caption = "Indicadores principales de las variables cuantitativas") |>
+  kableExtra::kable_styling(full_width = TRUE)
+```
+
+**Lectura de los resultados.** La base registra 200 observaciones distribuidas en cinco sectores laborales. En el análisis cualitativo, las tablas permiten identificar la categoría más frecuente en cada variable y comparar su peso porcentual. En el análisis cuantitativo, la media y la mediana describen la tendencia central, mientras que la desviación estándar, la varianza y el rango muestran la dispersión.
+
+Los resultados describen exclusivamente los registros del archivo Excel suministrado. No deben interpretarse como estimaciones representativas de todas las personas vinculadas a la administración pública, porque el archivo no aporta información sobre un diseño muestral que permita hacer esa generalización.
+
+# Conclusiones
+
+1. La estadística descriptiva facilita organizar y comprender la información de la base mediante tablas, medidas y gráficos.
+2. La clasificación de las variables determina qué procedimientos estadísticos son apropiados: las variables nominales se comparan por categorías, las ordinales respetan un orden y las cuantitativas permiten cálculos numéricos.
+3. Las medidas de tendencia central resumen los valores típicos, mientras que las medidas de dispersión muestran qué tan separados se encuentran los datos.
+4. La agrupación mediante la regla de Sturges permite presentar de forma ordenada las variables cuantitativas continuas.
+5. La interpretación debe limitarse a los 200 registros analizados y a la información efectivamente contenida en el Excel.
+
+# Anexo: cómo actualizar y generar el informe
+
+Para que el proyecto funcione correctamente, mantenga en una misma carpeta estos tres archivos:
+
+- `index.qmd` (este documento).
+- `sector.xlsx` (base de datos original).
+- `Logo_Esap.png` (imagen institucional).
+
+Abra `index.qmd` en RStudio con Quarto instalado y seleccione **Render**. También puede ejecutar en la consola:
+
+```{r}
+# Instale Quarto desde https://quarto.org/docs/get-started/
+# Luego, en la terminal de RStudio:
+# quarto render index.qmd
+```
+
+El resultado será un archivo `index.html` en la misma carpeta. Si actualiza los registros del Excel, vuelva a ejecutar Render para recalcular las tablas, medidas y gráficos.
